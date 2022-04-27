@@ -1,0 +1,128 @@
+# ASP.NET Core (.NET Framework)
+# Build and test ASP.NET Core projects targeting the full .NET Framework.
+# Add steps that publish symbols, save build artifacts, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/dotnet-core
+# yaml file for develop/master branches build
+trigger: none
+  # branches:
+  #   include:
+  #   - main
+
+pr: none
+
+resources:
+  pipelines:
+    - pipeline: sre-acr-georeplication-ci-pipeline
+      source: "sre-acr-georeplication-ci-pipeline"
+      trigger:
+        branches:
+          - main
+  repositories:
+   - repository: leanovated-sre-team
+     type: git
+     name: CLIENT-DEMOS/leanovated-sre-team
+     ref: main
+pool:
+  vmImage: $(vmImageName)
+  name: $(agentPoolName)
+variables:
+  - name: solution
+    value: '**/*.sln'
+  - name: buildPlatform
+    value: 'Any CPU'
+  - name: buildConfiguration
+    value: "Release"
+  - name : NugetSecurityAnalysisWarningLevel
+    value : none
+  - group: "cloud-courtyard-dev"
+  - name : manifest_artifact
+    value: $(Pipeline.Workspace)/sre-acr-georeplication-ci-pipeline/$(appName)/manifest-templates
+
+stages:
+
+# Dev Env 
+- stage: PublishManigestToDev
+  displayName: Publish Dev Manifest
+
+  pool:
+    vmImage: $(vmImageName)
+    name: $(agentPoolName)
+  jobs:
+  - deployment: PublishManifest
+    environment: dev
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          #Build and Push Image
+          - checkout: leanovated-courtyard-team
+            persistCredentials: true
+
+          - script: |
+             git config --global user.email jmgitops@gitops.com & git config --global user.name "AKS CI Pipeline"
+            workingDirectory: $(System.DefaultWorkingDirectory)
+
+          - script: |
+             git checkout main 
+             git pull
+             git checkout -b $(Build.BuildNumber)
+             #git pull
+             cp '$(manifest_artifact)/deployment.yaml' "apps/courtyard/dev"
+             #  cp "$(manifest_artifact)/"* "apps/dev/courtyard"
+             #  cp '$(manifest_artifact)/service.yaml' app
+             #  cp '$(manifest_artifact)/namespace.yaml' app
+             #  cp '$(manifest_artifact)/config-map.yaml' app
+             #  cp '$(manifest_artifact)/network-policy.yaml' app
+             git add .
+             git commit -m "publish manifest files for deployment $(Build.BuildNumber)"
+             git push --set-upstream origin $(Build.BuildNumber) 
+
+             pr_response=$(curl -u :$(System.AccessToken) -H "Content-Type: application/json" --fail -d '{"sourceRefName":"refs/heads/$(Build.BuildNumber)", "targetRefName":"refs/heads/main", "description":"Deploy to manifest to main", "title":"deployment '$(Build.BuildNumber)'"}' "$SYSTEM_COLLECTIONURI$SYSTEM_TEAMPROJECT/_apis/git/repositories/leanovated-courtyard-team/pullrequests?api-version=6.1-preview.1")
+             echo $pr_response
+            displayName: Commit and Push Manifest File to GitOps Branch
+            workingDirectory: $(System.DefaultWorkingDirectory)
+
+# Qa Env 
+- stage: PublishManifestToQa
+  displayName: Publish QA Manifest
+
+  pool:
+    vmImage: $(vmImageName)
+    name: $(agentPoolName)
+  variables:
+  - name: prBranchName
+    value:  $(Build.BuildNumber)dr
+  jobs:
+  - deployment: PublishManifest
+    environment: qa
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          #Build and Push Image
+          - checkout: leanovated-courtyard-team
+            persistCredentials: true
+
+          - script: |
+             git config --global user.email jmgitops@gitops.com & git config --global user.name "AKS CI Pipeline"
+            workingDirectory: $(System.DefaultWorkingDirectory)
+
+          - script: |
+             git checkout main 
+             git pull
+             git checkout -b $(prBranchName)
+             #git pull
+             cp '$(manifest_artifact)/deployment.yaml' "apps/courtyard/dev-dr"
+             #  cp '$(manifest_artifact)/service.yaml' app
+             #  cp '$(manifest_artifact)/namespace.yaml' app
+             #  cp '$(manifest_artifact)/config-map.yaml' app
+             #  cp '$(manifest_artifact)/network-policy.yaml' app
+             git add .
+             git commit -m "publish manifest files for deployment $(prBranchName)"
+             git push --set-upstream origin $(prBranchName) 
+
+             pr_response=$(curl -u :$(System.AccessToken) -H "Content-Type: application/json" --fail -d '{"sourceRefName":"refs/heads/$(prBranchName)", "targetRefName":"refs/heads/main", "description":"Deploy to manifest to main", "title":"deployment '$(prBranchName)'"}' "$SYSTEM_COLLECTIONURI$SYSTEM_TEAMPROJECT/_apis/git/repositories/leanovated-courtyard-team/pullrequests?api-version=6.1-preview.1")
+             echo $pr_response
+            displayName: Commit and Push Manifest File to GitOps Branch
+            workingDirectory: $(System.DefaultWorkingDirectory)
+

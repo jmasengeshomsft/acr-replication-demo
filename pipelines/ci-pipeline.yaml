@@ -1,0 +1,125 @@
+# ASP.NET Core (.NET Framework)
+# Build and test ASP.NET Core projects targeting the full .NET Framework.
+# Add steps that publish symbols, save build artifacts, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/dotnet-core
+# yaml file for develop/master branches build
+trigger:
+  branches:
+    include:
+    - main
+
+pr: none
+
+resources:
+  repositories:
+   - repository: leanovated-courtyard-team
+     type: git
+     name: CLIENT-DEMOS/leanovated-courtyard-team
+     ref: main
+
+pool:
+  vmImage: $(vmImageName)
+  name: $(agentPoolName)
+variables:
+  - name: solution
+    value: '**/*.sln'
+  - name: buildPlatform
+    value: 'Any CPU'
+  - name: buildConfiguration
+    value: "Release"
+  - name : NugetSecurityAnalysisWarningLevel
+    value : none
+  - group: "cloud-courtyard-dev"
+
+stages:
+- stage: BuildStage
+  displayName: Build
+  jobs:
+  # Main build job 
+  - job: Build
+    steps:
+    - task: UseDotNet@2
+      inputs:
+        packageType: sdk
+        version: 2.2.x
+        installationPath: $(Agent.ToolsDirectory)/dotnet
+      displayName: 'Install dotnet core'
+  
+    - task: DotNetCoreCLI@2
+      inputs:
+        command: 'restore'
+        feedsToUse: 'config'
+        nugetConfigPath: 'nuget.config'
+        projects: '**/*.csproj'
+      displayName: 'Dotnet Restore'
+
+    - task: DotNetCoreCLI@2
+      inputs:
+        command: 'build'
+        projects: '**/*.csproj'
+        feedsToUse: 'config'
+      displayName: 'Build the solution'
+    - task: Docker@2
+      displayName: Login to ACR
+      inputs:
+        command: login
+        containerRegistry: $(acrConnection)
+    - task: Docker@2
+      displayName: Build and Push
+      inputs:
+        command: buildAndPush
+        containerRegistry: $(acrConnection)
+        repository: $(imageName)
+        # buildContext: '.'
+        Dockerfile: 'Dockerfile'
+        tags: $(Build.BuildId)    
+  
+#   #Publish artifacts for release
+  - job: BuildArtifacts 
+    dependsOn:
+    - Build
+    steps:
+    - task: CopyFiles@2
+      inputs:
+        SourceFolder: 
+        Contents: 'manifest-templates/**'
+        TargetFolder: "$(Build.ArtifactStagingDirectory)"
+        flattenFolder: false
+      displayName: 'Copy k8s yaml files'
+
+#   #copy files under drop
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifacts'
+      inputs:
+        pathToPublish: "$(Build.ArtifactStagingDirectory)"
+        artifactName: drop
+
+# # Pod Deployment 
+- stage: PublishManifest
+  displayName: Publish YAML Manifest
+  pool:
+    vmImage: $(vmImageName)
+    name: $(agentPoolName)
+  jobs:
+  - deployment: PublishManifest
+    environment: dev
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          #Build and Push Image
+          
+          - download: current
+            artifact: drop
+          #replace local vars, group variables into yaml files 
+          - task: replacetokens@3
+            displayName: 'Replace tokens in **/*.yaml'
+            inputs:
+              rootDirectory: '$(Pipeline.Workspace)/drop'
+              targetFiles: 'manifest-templates/*.yaml,manifest-templates/*.yml'
+              verbosity: detailed  
+          
+          - publish: $(Pipeline.Workspace)/drop
+            artifact: $(appName)
+            displayName: "Publish Image Tags"
+

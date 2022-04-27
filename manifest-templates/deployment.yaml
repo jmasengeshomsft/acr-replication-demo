@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acr-replication-deployment
+  labels:
+    app: acr-replication
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: acr-replication
+  template:
+    metadata:
+      labels:
+        app: acr-replication
+    spec:
+      containers:
+      - name: acr-replication
+        image: #{azureContainerRegistry}#/acr-replication:#{Build.BuildId}#
+        ports:
+        - containerPort: 80
+        env:
+        - name: DOCKER_REGISTRY 
+          valueFrom:
+            configMapKeyRef:
+              name: acr-replication-configmap           
+              key: dockerRegistry 
